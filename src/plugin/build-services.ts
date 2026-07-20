@@ -54,6 +54,8 @@ export function buildServices(): AppServices {
     baseUrl: runtime.stInternalBaseUrl,
     hostHeader: runtime.stHostHeader,
     timeoutMs: runtime.stTimeoutMs,
+    generateTimeoutMs: runtime.stGenerateTimeoutMs,
+    generateIdleTimeoutMs: runtime.stGenerateIdleTimeoutMs,
   });
   const sessionService = new SessionService(repositories.sessionRepository);
   const sessionTaskQueue = new SessionTaskQueue();
