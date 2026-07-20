@@ -133,9 +133,23 @@ export class BotManager {
     return entry;
   }
 
-  public async stopBot(accountId: string): Promise<void> {
+  /**
+   * 停止单个 bot。
+   * @param opts.disable 是否把 account_configs.bot_enabled 写成 false。
+   *   - true（默认）：用户主动停止 / 路由 stop，下次不应自动拉起
+   *   - false：进程退出时的 stopAll，只停 polling，保留 enabled，便于下次 autostart
+   */
+  public async stopBot(accountId: string, opts: { disable?: boolean } = {}): Promise<void> {
+    const disable = opts.disable !== false;
     const entry = this.entries.get(accountId);
-    if (!entry) return;
+    if (!entry) {
+      // 进程里没在跑，但用户点了停止：仍要持久化 disabled。
+      if (disable) {
+        try { this.deps.configRepo.upsert(accountId, { botEnabled: false }); }
+        catch (e) { console.error(JSON.stringify({ scope: "bot_manager", accountId, event: "config_disable_failed", message: e instanceof Error ? e.message : String(e) })); }
+      }
+      return;
+    }
     entry.status = "stopping";
     try {
       await entry.bot.stop();
@@ -144,23 +158,44 @@ export class BotManager {
       console.error(JSON.stringify({ scope: "bot_manager", accountId, event: "bot_stop_failed", message: entry.lastError }));
     } finally {
       this.entries.delete(accountId);
-      try { this.deps.configRepo.upsert(accountId, { botEnabled: false }); }
-      catch (e) { console.error(JSON.stringify({ scope: "bot_manager", accountId, event: "config_disable_failed", message: e instanceof Error ? e.message : String(e) })); }
+      if (disable) {
+        try { this.deps.configRepo.upsert(accountId, { botEnabled: false }); }
+        catch (e) { console.error(JSON.stringify({ scope: "bot_manager", accountId, event: "config_disable_failed", message: e instanceof Error ? e.message : String(e) })); }
+      }
     }
   }
 
   public async restartBot(accountId: string): Promise<BotEntry> {
-    await this.stopBot(accountId);
+    // 重启是运维动作，不要把 enabled 清掉；startBot 成功后会再写成 true。
+    await this.stopBot(accountId, { disable: false });
     return this.startBot(accountId);
   }
 
   public async autostartAll(): Promise<void> {
     const cfgs = this.deps.configRepo.listEnabledWithToken();
-    await Promise.allSettled(cfgs.map((cfg) => this.startBot(cfg.accountId)));
+    console.log(JSON.stringify({
+      scope: "bot_manager",
+      event: "autostart_begin",
+      count: cfgs.length,
+      accountIds: cfgs.map((c) => c.accountId),
+    }));
+    const results = await Promise.allSettled(cfgs.map((cfg) => this.startBot(cfg.accountId)));
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+        console.error(JSON.stringify({
+          scope: "bot_manager",
+          event: "autostart_one_failed",
+          accountId: cfgs[index]?.accountId,
+          message: reason,
+        }));
+      }
+    }
   }
 
   public async stopAll(): Promise<void> {
     const ids = [...this.entries.keys()];
-    await Promise.allSettled(ids.map((id) => this.stopBot(id)));
+    // 进程退出只停 polling，绝不能把 bot_enabled 打成 0，否则下次 autostartAll 会空跑。
+    await Promise.allSettled(ids.map((id) => this.stopBot(id, { disable: false })));
   }
 }
