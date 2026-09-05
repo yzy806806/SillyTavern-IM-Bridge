@@ -4,6 +4,7 @@ import type { Account, ActiveSession, RecentSession, StoredChatSession, StreamEv
 import type { CompressProgressEvent } from "../core/services/compression-service";
 import { SseResponse } from "../delivery/http/sse/sse-response";
 import { AppError, toAppError } from "../shared/errors/app-error";
+import { maskProxyUrl } from "../infra/proxy/proxy-agent";
 import { buildSessionKey, createRequestId } from "../shared/utils/ids";
 import {
   requireSTAdmin,
@@ -528,6 +529,9 @@ export function registerRoutes(router: Router, services: AppServices): void {
       tokenPreview: maskToken(cfg?.telegramBotToken ?? null),
       hasBotToken: !!cfg?.telegramBotToken,
       allowedUserIds: cfg?.telegramAllowedUserIds ?? [],
+      proxy: cfg?.proxy
+        ? { enabled: cfg.proxy.enabled, urlMasked: maskProxyUrl(cfg.proxy.url), hasUrl: !!cfg.proxy.url }
+        : { enabled: false, urlMasked: null, hasUrl: false },
       compress: cfg?.compress ?? null,
       tg: cfg?.tg ?? null,
       botStatus: bot?.status ?? "stopped",
@@ -611,6 +615,39 @@ export function registerRoutes(router: Router, services: AppServices): void {
     const accountId = targetAccountId(req);
     services.bindCodeService.revoke(accountId);
     res.status(204).end();
+  }));
+
+  router.get("/admin/accounts/:handle/proxy", requireSelfOrAdmin(), asyncHandler(async (req, res) => {
+    const accountId = targetAccountId(req);
+    const cfg = services.accountConfigService.get(accountId);
+    if (!cfg) throw new AppError("ACCOUNT_NOT_FOUND", "账号不存在", 404);
+    res.json({
+      enabled: cfg.proxy.enabled,
+      urlMasked: maskProxyUrl(cfg.proxy.url),
+      hasUrl: !!cfg.proxy.url,
+    });
+  }));
+
+  router.put("/admin/accounts/:handle/proxy", requireSelfOrAdmin(), asyncHandler(async (req, res) => {
+    const accountId = targetAccountId(req);
+    const enabled = Boolean(req.body?.enabled);
+    // url 未随请求提供（undefined）→ 服务层保留已存 URL；显式 null → 清空
+    const rawUrl = req.body?.url;
+    const url = rawUrl === undefined ? undefined : typeof rawUrl === "string" ? rawUrl : null;
+    services.accountConfigService.setProxy(accountId, { enabled, url });
+    if (services.botManager.get(accountId)) {
+      await services.botManager.restartBot(accountId);
+    }
+    res.json(serializeAccount(accountId));
+  }));
+
+  router.delete("/admin/accounts/:handle/proxy", requireSelfOrAdmin(), asyncHandler(async (req, res) => {
+    const accountId = targetAccountId(req);
+    services.accountConfigService.clearProxy(accountId);
+    if (services.botManager.get(accountId)) {
+      await services.botManager.restartBot(accountId);
+    }
+    res.json(serializeAccount(accountId));
   }));
 
   router.put("/admin/accounts/:handle/compress-config", requireSelfOrAdmin(), asyncHandler(async (req, res) => {

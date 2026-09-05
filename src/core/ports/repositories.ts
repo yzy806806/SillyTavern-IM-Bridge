@@ -1,5 +1,6 @@
 ﻿import type {
   Account,
+  AccountProxyConfig,
   ActiveSession,
   ExternalIdentity,
   HistorySyncRecord,
@@ -57,6 +58,7 @@ export interface AccountConfigRecord {
     streamMinDeltaChars: number;
     advanced: Record<string, unknown>;
   };
+  proxy: AccountProxyConfig;
   createdAt: string;
   updatedAt: string;
 }
@@ -67,6 +69,7 @@ export type AccountConfigPatch = Partial<{
   botEnabled: boolean;
   compress: Partial<AccountConfigRecord["compress"]>;
   tg: Partial<AccountConfigRecord["tg"]>;
+  proxy: Partial<AccountConfigRecord["proxy"]>;
 }>;
 
 export interface AccountConfigRepository {

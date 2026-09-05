@@ -32,6 +32,9 @@ module.exports = (_env, argv) => {
     externalsPresets: { node: true },
     externals: {
       express: "commonjs2 express",
+      "socks-proxy-agent": "commonjs2 socks-proxy-agent",
+      "http-proxy-agent": "commonjs2 http-proxy-agent",
+      "https-proxy-agent": "commonjs2 https-proxy-agent",
     },
     optimization: {
       minimize: mode === "production",

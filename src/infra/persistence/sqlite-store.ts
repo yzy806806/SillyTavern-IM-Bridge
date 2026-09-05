@@ -714,6 +714,8 @@ function ensureCurrentSchema(db: DatabaseSync): void {
       tg_stream_min_interval_ms INTEGER NOT NULL DEFAULT 5000,
       tg_stream_min_delta_chars INTEGER NOT NULL DEFAULT 700,
       tg_advanced_json          TEXT NOT NULL DEFAULT '{}',
+      proxy_enabled             INTEGER NOT NULL DEFAULT 0,
+      proxy_url                 TEXT,
       created_at                TEXT NOT NULL,
       updated_at                TEXT NOT NULL
     );
@@ -761,6 +763,14 @@ function ensureCurrentSchema(db: DatabaseSync): void {
   if (turnRecordColumns.length > 0 && !turnRecordColumns.includes("updated_at")) {
     db.exec(`ALTER TABLE turn_records ADD COLUMN updated_at TEXT`);
   }
+  const accountConfigColumns = getTableColumns(db, "account_configs");
+  if (accountConfigColumns.length > 0 && !accountConfigColumns.includes("proxy_enabled")) {
+    db.exec(`ALTER TABLE account_configs ADD COLUMN proxy_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (accountConfigColumns.length > 0 && !accountConfigColumns.includes("proxy_url")) {
+    db.exec(`ALTER TABLE account_configs ADD COLUMN proxy_url TEXT`);
+  }
+
   if (turnRecordColumns.length > 0) {
     db.exec(`
       UPDATE turn_records
@@ -1047,6 +1057,10 @@ function parseAccountConfigRow(row: Record<string, unknown>): AccountConfigRecor
       streamMinDeltaChars: Number(row.tg_stream_min_delta_chars ?? 700),
       advanced: safeJsonParse<Record<string, unknown>>(String(row.tg_advanced_json ?? "{}"), {}),
     },
+    proxy: {
+      enabled: Number(row.proxy_enabled ?? 0) === 1,
+      url: row.proxy_url == null ? null : String(row.proxy_url),
+    },
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -1063,7 +1077,7 @@ export class SqliteAccountConfigRepository implements AccountConfigRepository {
     const row = this.db.prepare(`
       SELECT account_id, telegram_bot_token, telegram_allowed_user_ids, bot_enabled,
              compress_keep_recent, compress_batch_size, compress_timeout_ms, compress_retry_count, compress_retry_delay_ms,
-             tg_inter_message_delay_ms, tg_stream_min_interval_ms, tg_stream_min_delta_chars, tg_advanced_json,
+             tg_inter_message_delay_ms, tg_stream_min_interval_ms, tg_stream_min_delta_chars, tg_advanced_json, proxy_enabled, proxy_url,
              created_at, updated_at
       FROM account_configs
       WHERE account_id = ?
@@ -1090,6 +1104,10 @@ export class SqliteAccountConfigRepository implements AccountConfigRepository {
       telegramAllowedUserIds: patch.telegramAllowedUserIds !== undefined ? Array.from(new Set(patch.telegramAllowedUserIds.map(String))) : current.telegramAllowedUserIds,
       botEnabled: patch.botEnabled !== undefined ? Boolean(patch.botEnabled) : current.botEnabled,
       compress: { ...current.compress, ...(patch.compress ?? {}) },
+      proxy: {
+        ...current.proxy,
+        ...(patch.proxy ?? {}),
+      },
       tg: {
         ...current.tg,
         ...(patch.tg ?? {}),
@@ -1111,6 +1129,8 @@ export class SqliteAccountConfigRepository implements AccountConfigRepository {
         tg_stream_min_interval_ms = ?,
         tg_stream_min_delta_chars = ?,
         tg_advanced_json = ?,
+        proxy_enabled = ?,
+        proxy_url = ?,
         updated_at = ?
       WHERE account_id = ?
     `).run(
@@ -1126,6 +1146,8 @@ export class SqliteAccountConfigRepository implements AccountConfigRepository {
       next.tg.streamMinIntervalMs,
       next.tg.streamMinDeltaChars,
       safeJsonStringify(next.tg.advanced, "{}"),
+      next.proxy.enabled ? 1 : 0,
+      next.proxy.url,
       next.updatedAt,
       accountId,
     );
@@ -1136,7 +1158,7 @@ export class SqliteAccountConfigRepository implements AccountConfigRepository {
     const rows = this.db.prepare(`
       SELECT account_id, telegram_bot_token, telegram_allowed_user_ids, bot_enabled,
              compress_keep_recent, compress_batch_size, compress_timeout_ms, compress_retry_count, compress_retry_delay_ms,
-             tg_inter_message_delay_ms, tg_stream_min_interval_ms, tg_stream_min_delta_chars, tg_advanced_json,
+             tg_inter_message_delay_ms, tg_stream_min_interval_ms, tg_stream_min_delta_chars, tg_advanced_json, proxy_enabled, proxy_url,
              created_at, updated_at
       FROM account_configs
       WHERE bot_enabled = 1 AND telegram_bot_token IS NOT NULL AND length(trim(telegram_bot_token)) > 0
@@ -1148,7 +1170,7 @@ export class SqliteAccountConfigRepository implements AccountConfigRepository {
     const rows = this.db.prepare(`
       SELECT account_id, telegram_bot_token, telegram_allowed_user_ids, bot_enabled,
              compress_keep_recent, compress_batch_size, compress_timeout_ms, compress_retry_count, compress_retry_delay_ms,
-             tg_inter_message_delay_ms, tg_stream_min_interval_ms, tg_stream_min_delta_chars, tg_advanced_json,
+             tg_inter_message_delay_ms, tg_stream_min_interval_ms, tg_stream_min_delta_chars, tg_advanced_json, proxy_enabled, proxy_url,
              created_at, updated_at
       FROM account_configs
       ORDER BY created_at ASC

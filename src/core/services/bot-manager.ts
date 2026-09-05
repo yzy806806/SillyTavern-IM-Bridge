@@ -19,6 +19,7 @@ import {
   TelegramChatQueue,
   type TelegramChatQueueOptions,
 } from "../../delivery/telegram/telegram-chat-queue";
+import { buildBotFetchAgent } from "../../infra/proxy/proxy-agent";
 
 export type BotStatus = "starting" | "running" | "stopping" | "stopped" | "error";
 
@@ -76,7 +77,15 @@ export class BotManager {
     }
     const queue = new TelegramChatQueue(this.deps.buildQueueOptions(cfg));
     const sender = new TelegramSender(queue, { enableOutboundLogs: true });
-    const bot = new Bot(cfg.telegramBotToken);
+    let botFetchInit: { agent?: unknown } | undefined;
+    try {
+      const agent = buildBotFetchAgent(cfg.proxy);
+      botFetchInit = agent ? { agent } : undefined;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new AppError("BOT_PROXY_INVALID", `代理配置无效: ${message}`, 400);
+    }
+    const bot = new Bot(cfg.telegramBotToken, botFetchInit ? { client: { baseFetchConfig: botFetchInit as never } } : undefined);
     const handle = this.deps.resolveHandle(accountId);
     const entry: BotEntry = {
       accountId,

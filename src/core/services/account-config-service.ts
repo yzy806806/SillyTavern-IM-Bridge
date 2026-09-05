@@ -1,5 +1,6 @@
 import type { AccountConfigRepository, AccountConfigRecord, AccountConfigPatch, AccountRepository } from "../ports/repositories";
 import { AppError } from "../../shared/errors/app-error";
+import { normalizeProxyUrl, ProxyConfigError } from "../../infra/proxy/proxy-agent";
 
 export class AccountConfigService {
   private readonly accountRepo: AccountRepository;
@@ -36,6 +37,39 @@ export class AccountConfigService {
 
   public clearBotToken(accountId: string): AccountConfigRecord {
     return this.update(accountId, { telegramBotToken: null, botEnabled: false });
+  }
+
+  /**
+   * 设置代理配置。
+   * - enabled=true：url 必填且校验通过
+   * - enabled=false 且 url 未提供（undefined）：保留已存 URL，便于 UI 重新启用
+   * - enabled=false 且 url=null：显式清空
+   */
+  public setProxy(accountId: string, proxy: { enabled: boolean; url?: string | null }): AccountConfigRecord {
+    if (proxy.enabled) {
+      const url = (proxy.url ?? "").trim();
+      if (!url) {
+        throw new AppError("PROXY_URL_EMPTY", "启用代理时代理 URL 不能为空", 400);
+      }
+      try {
+        normalizeProxyUrl(url);
+      } catch (error) {
+        if (error instanceof ProxyConfigError) {
+          throw new AppError("PROXY_URL_INVALID", error.message, 400);
+        }
+        throw error;
+      }
+      return this.update(accountId, { proxy: { enabled: true, url } });
+    }
+    if (proxy.url === undefined) {
+      const current = this.ensure(accountId);
+      return this.update(accountId, { proxy: { enabled: false, url: current.proxy.url } });
+    }
+    return this.update(accountId, { proxy: { enabled: false, url: proxy.url } });
+  }
+
+  public clearProxy(accountId: string): AccountConfigRecord {
+    return this.update(accountId, { proxy: { enabled: false, url: null } });
   }
 
   public setAllowedUsers(accountId: string, userIds: string[]): AccountConfigRecord {
